@@ -1,0 +1,32 @@
+@import url('https://fonts.googleapis.com/css2?family=Rye&family=Special+Elite&display=swap');
+@import "tailwindcss";
+
+:root {
+  --parchment: #ECE0C4;
+  --leather: #3B2A1E;
+  --leather-dark: #201510;
+  --rust: #A63D2F;
+  --dust: #C9A66B;
+  --ink: #2A2013;
+}
+
+@theme inline {
+  --color-parchment: var(--parchment);
+  --color-leather: var(--leather);
+  --color-leather-dark: var(--leather-dark);
+  --color-rust: var(--rust);
+  --color-dust: var(--dust);
+  --color-ink: var(--ink);
+}
+
+body {
+  background: var(--leather-dark);
+  background-image:
+    radial-gradient(ellipse at top, rgba(201,166,107,0.08), transparent 60%);
+  color: var(--parchment);
+  font-family: 'Special Elite', monospace;
+}
+
+.font-western {
+  font-family: 'Rye', serif;
+}
