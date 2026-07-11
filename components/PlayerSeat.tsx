@@ -8,7 +8,7 @@ export const ROLE_LABEL: Record<string, string> = {
   Sheriff: "Cảnh sát trưởng",
   Deputy: "Phó cảnh sát trưởng",
   Outlaw: "Cướp",
-  Renegade: "Kẻ phản bội",
+  Renegade: "Kẻ 2 mặt ( Tuyến )",
   Unknown: "???",
 };
 
