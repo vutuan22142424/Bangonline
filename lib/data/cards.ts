@@ -49,31 +49,31 @@ function e(kind: CardKind, suit: Suit, rank: Rank): DeckEntry {
 
 const RAW_DECK: DeckEntry[] = [
   // Bang! (25)
-  e("Bang", "Hearts", "A"), e("Bang", "Hearts", "2"), e("Bang", "Hearts", "3"),
+  e("Bang", "Hearts", "A"), e("Bang", "Hearts", "Q"), e("Bang", "Hearts", "K"),
   e("Bang", "Diamonds", "A"), e("Bang", "Diamonds", "2"), e("Bang", "Diamonds", "3"),
   e("Bang", "Diamonds", "4"), e("Bang", "Diamonds", "5"), e("Bang", "Diamonds", "6"),
   e("Bang", "Diamonds", "7"), e("Bang", "Diamonds", "8"), e("Bang", "Diamonds", "9"),
-  e("Bang", "Clubs", "2"), e("Bang", "Clubs", "3"), e("Bang", "Clubs", "4"),
+  e("Bang", "Diamonds", "10"), e("Bang", "Diamonds", "J"), e("Bang", "Diamonds", "Q"),
+ e("Bang", "Diamonds", "K"), e("Bang", "Clubs", "2"), e("Bang", "Clubs", "3"),
+  e("Bang", "Clubs", "8"), e("Bang", "Clubs", "9"), e("Bang", "Clubs", "4"),
   e("Bang", "Clubs", "5"), e("Bang", "Clubs", "6"), e("Bang", "Clubs", "7"),
-  e("Bang", "Clubs", "8"), e("Bang", "Clubs", "9"), e("Bang", "Spades", "2"),
-  e("Bang", "Spades", "3"), e("Bang", "Spades", "4"), e("Bang", "Spades", "5"),
-  e("Bang", "Spades", "6"),
+  e("Bang", "Spades", "A"),
   // Missed! (12)
   e("Missed", "Clubs", "10"), e("Missed", "Clubs", "J"), e("Missed", "Clubs", "Q"),
-  e("Missed", "Clubs", "K"), e("Missed", "Clubs", "A"), e("Missed", "Spades", "10"),
-  e("Missed", "Spades", "J"), e("Missed", "Spades", "Q"), e("Missed", "Spades", "K"),
-  e("Missed", "Spades", "A"), e("Missed", "Spades", "7"), e("Missed", "Spades", "8"),
+  e("Missed", "Clubs", "K"), e("Missed", "Clubs", "A"), e("Missed", "Spades", "8"),
+  e("Missed", "Spades", "2"), e("Missed", "Spades", "3"), e("Missed", "Spades", "4"),
+  e("Missed", "Spades", "5"), e("Missed", "Spades", "6"), e("Missed", "Spades", "7"),
   // Beer (6)
   e("Beer", "Hearts", "6"), e("Beer", "Hearts", "7"), e("Beer", "Hearts", "8"),
   e("Beer", "Hearts", "9"), e("Beer", "Hearts", "10"), e("Beer", "Hearts", "J"),
   // Panic! (4)
-  e("Panic", "Hearts", "J"), e("Panic", "Diamonds", "J"), e("Panic", "Hearts", "8"),
+  e("Panic", "Hearts", "J"), e("Panic", "Diamonds", "8"), e("Panic", "Hearts", "A"),
   e("Panic", "Hearts", "Q"),
   // Cat Balou (4)
-  e("CatBalou", "Diamonds", "9"), e("CatBalou", "Diamonds", "K"), e("CatBalou", "Hearts", "K"),
-  e("CatBalou", "Clubs", "Q"),
+  e("CatBalou", "Diamonds", "9"), e("CatBalou", "Diamonds", "J"), e("CatBalou", "Hearts", "K"),
+  e("CatBalou", "Diamonds", "10"),
   // Duel (3)
-  e("Duel", "Diamonds", "Q"), e("Duel", "Spades", "8"), e("Duel", "Spades", "9"),
+  e("Duel", "Diamonds", "Q"), e("Duel", "Clubs", "8"), e("Duel", "Spades", "J"),
   // Indians! (2)
   e("Indians", "Diamonds", "K"), e("Indians", "Diamonds", "A"),
   // Gatling (1)
@@ -81,31 +81,31 @@ const RAW_DECK: DeckEntry[] = [
   // Saloon (1)
   e("Saloon", "Hearts", "5"),
   // Stagecoach (2)
-  e("Stagecoach", "Spades", "9"), e("Stagecoach", "Spades", "6"),
+  e("Stagecoach", "Spades", "9"), e("Stagecoach", "Spades", "9"),
   // Wells Fargo (1)
   e("WellsFargo", "Hearts", "3"),
   // General Store (2)
-  e("GeneralStore", "Clubs", "K"), e("GeneralStore", "Spades", "Q"),
+  e("GeneralStore", "Clubs", "9"), e("GeneralStore", "Spades", "Q"),
   // Barrel (2)
-  e("Barrel", "Spades", "K"), e("Barrel", "Spades", "A"),
+  e("Barrel", "Spades", "K"), e("Barrel", "Spades", "Q"),
   // Scope (1)
-  e("Scope", "Spades", "J"),
+  e("Scope", "Spades", "A"),
   // Mustang (2)
   e("Mustang", "Hearts", "8"), e("Mustang", "Hearts", "9"),
   // Jail (3)
-  e("Jail", "Spades", "10"), e("Jail", "Hearts", "4"), e("Jail", "Diamonds", "J"),
+  e("Jail", "Spades", "10"), e("Jail", "Hearts", "4"), e("Jail", "Spades", "J"),
   // Dynamite (1)
-  e("Dynamite", "Clubs", "8"),
+  e("Dynamite", "Hearts", "2"),
   // Volcanic (2)
   e("Volcanic", "Clubs", "10"), e("Volcanic", "Spades", "10"),
   // Schofield (3)
-  e("Schofield", "Clubs", "J"), e("Schofield", "Clubs", "Q"), e("Schofield", "Clubs", "K"),
+  e("Schofield", "Clubs", "J"), e("Schofield", "Clubs", "Q"), e("Schofield", "Spades", "K"),
   // Remington (1)
-  e("Remington", "Clubs", "A"),
+  e("Remington", "Clubs", "K"),
   // Rev. Carabine (1)
-  e("RevCarabine", "Clubs", "9"),
+  e("RevCarabine", "Clubs", "A"),
   // Winchester (1)
-  e("Winchester", "Hearts", "Q"),
+  e("Winchester", "Spades", "8"),
 ];
 
 export function buildFreshDeck(): PlayingCard[] {
