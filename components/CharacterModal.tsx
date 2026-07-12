@@ -1,5 +1,6 @@
+import Image from "next/image";
 import { PlayerHandView } from "@/lib/types";
-import { CHARACTERS } from "@/lib/data/characters";
+import { CHARACTERS, CHARACTER_IMAGE_SRC } from "@/lib/data/characters";
 import { ROLE_LABEL } from "./PlayerSeat";
 
 export function CharacterModal({
@@ -12,6 +13,7 @@ export function CharacterModal({
   onClose: () => void;
 }) {
   const character = player.character !== "Unknown" ? CHARACTERS[player.character] : null;
+  const imageSrc = player.character !== "Unknown" ? CHARACTER_IMAGE_SRC[player.character] : undefined;
 
   return (
     <div
@@ -42,15 +44,21 @@ export function CharacterModal({
           </button>
         </div>
 
+        {imageSrc && (
+          <div className="w-28 aspect-[250/389] relative mx-auto mb-4 rounded-md overflow-hidden border-2 border-dust/40 shadow">
+            <Image src={imageSrc} alt={character?.name ?? ""} fill className="object-cover" sizes="112px" />
+          </div>
+        )}
+
         <div className="mb-4">
-          <div className="flex gap-1 mb-1">
+          <div className="flex gap-1 mb-1 justify-center">
             {Array.from({ length: player.maxHp }).map((_, i) => (
               <span key={i} className={`text-lg ${i < player.hp ? "text-rust" : "text-dust/30"}`}>
                 ♥
               </span>
             ))}
           </div>
-          <p className="text-xs text-dust">
+          <p className="text-xs text-dust text-center">
             {player.hp} / {player.maxHp} máu
           </p>
         </div>

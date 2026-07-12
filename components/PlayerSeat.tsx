@@ -1,6 +1,7 @@
+import Image from "next/image";
 import { PlayerHandView } from "@/lib/types";
 import { CardFace } from "./CardView";
-import { CHARACTERS } from "@/lib/data/characters";
+import { CHARACTERS, CHARACTER_IMAGE_SRC } from "@/lib/data/characters";
 import { CARD_DEFS } from "@/lib/data/cards";
 import { kindOfCardId } from "@/lib/data/cards";
 
@@ -32,6 +33,7 @@ export function PlayerSeat({
   inRange?: boolean;
 }) {
   const character = player.character !== "Unknown" ? CHARACTERS[player.character] : null;
+  const portraitSrc = player.character !== "Unknown" ? CHARACTER_IMAGE_SRC[player.character] : undefined;
 
   function handleClick() {
     if (isTargetable) {
@@ -53,12 +55,21 @@ export function PlayerSeat({
           : "hover:border-dust/60"
       }`}
     >
-      <div className="flex items-center justify-between mb-1">
-        <span className="font-semibold text-sm truncate">{player.name}{isMe ? " (Bạn)" : ""}</span>
-        {player.isSheriff && <span title="Sheriff">⭐</span>}
+      <div className="flex gap-2 mb-1">
+        {portraitSrc && (
+          <div className="w-10 aspect-[250/389] relative flex-shrink-0 rounded overflow-hidden border border-dust/30">
+            <Image src={portraitSrc} alt={character?.name ?? ""} fill className="object-cover" sizes="40px" />
+          </div>
+        )}
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center justify-between mb-1">
+            <span className="font-semibold text-sm truncate">{player.name}{isMe ? " (Bạn)" : ""}</span>
+            {player.isSheriff && <span title="Sheriff">⭐</span>}
+          </div>
+          <div className="text-xs text-dust mb-1 truncate">{character ? character.name : "Đang chọn nhân vật..."}</div>
+          <div className="text-xs mb-2">{ROLE_LABEL[player.role] ?? player.role}</div>
+        </div>
       </div>
-      <div className="text-xs text-dust mb-1">{character ? character.name : "Đang chọn nhân vật..."}</div>
-      <div className="text-xs mb-2">{ROLE_LABEL[player.role] ?? player.role}</div>
       <div className="flex gap-1 mb-2">
         {Array.from({ length: player.maxHp }).map((_, i) => (
           <span key={i} className={i < player.hp ? "text-rust" : "text-dust/30"}>

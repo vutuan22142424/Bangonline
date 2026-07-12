@@ -6,6 +6,8 @@ import { supabaseBrowser } from "@/lib/supabaseClient";
 import { fetchState, joinRoom, sendAction, startGame } from "@/lib/api";
 import { RedactedGameState } from "@/lib/types";
 import { CARD_DEFS, kindOfCardId } from "@/lib/data/cards";
+import Image from "next/image";
+import { CHARACTER_IMAGE_SRC } from "@/lib/data/characters";
 import { CardFace } from "@/components/CardView";
 import { PlayerSeat, ROLE_LABEL } from "@/components/PlayerSeat";
 import { CharacterModal } from "@/components/CharacterModal";
@@ -245,22 +247,30 @@ export default function RoomPage() {
             </div>
           ) : (
             <div className="grid sm:grid-cols-2 gap-4">
-              {(me.characterChoices ?? []).map((charId) => {
-                const c = CHARACTERS[charId];
-                return (
-                  <button
-                    key={charId}
-                    onClick={() => act({ type: "CHOOSE_CHARACTER", playerId: playerId!, characterId: charId })}
-                    className="text-left rounded-lg border-2 border-dust/40 bg-leather/60 p-5 hover:border-rust hover:bg-rust/10 transition-colors"
-                  >
-                    <div className="flex items-center justify-between mb-2">
-                      <h2 className="font-western text-xl text-rust">{c.name}</h2>
-                      <span className="text-xs text-dust">{c.maxHp} ♥</span>
-                    </div>
-                    <p className="text-sm text-dust leading-relaxed">{c.ability}</p>
-                  </button>
-                );
-              })}
+                {(me.characterChoices ?? []).map((charId) => {
+                                const c = CHARACTERS[charId];
+                                const imgSrc = CHARACTER_IMAGE_SRC[charId];
+                                return (
+                                  <button
+                                    key={charId}
+                                    onClick={() => act({ type: "CHOOSE_CHARACTER", playerId: playerId!, characterId: charId })}
+                                    className="text-left rounded-lg border-2 border-dust/40 bg-leather/60 p-5 hover:border-rust hover:bg-rust/10 transition-colors flex gap-4"
+                                  >
+                                    {imgSrc && (
+                                      <div className="w-20 aspect-[250/389] relative flex-shrink-0 rounded-md overflow-hidden border border-dust/30">
+                                        <Image src={imgSrc} alt={c.name} fill className="object-cover" sizes="80px" />
+                                      </div>
+                                    )}
+                                    <div className="min-w-0">
+                                      <div className="flex items-center justify-between mb-2 gap-2">
+                                        <h2 className="font-western text-xl text-rust">{c.name}</h2>
+                                        <span className="text-xs text-dust whitespace-nowrap">{c.maxHp} ♥</span>
+                                      </div>
+                                      <p className="text-sm text-dust leading-relaxed">{c.ability}</p>
+                                    </div>
+                                  </button>
+                                );
+                              })}
             </div>
           )}
 

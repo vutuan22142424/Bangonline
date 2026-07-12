@@ -52,3 +52,21 @@ export function dealCharacterChoices(count: number): CharacterId[][] {
   }
   return hands;
 }
+export const CHARACTER_IMAGE_SRC: Record<CharacterId, string> = {
+  WillyTheKid: "/characters/willythekid.png",
+  CalamityJanet: "/characters/calamityjanet.png",
+  BartCassidy: "/characters/bartcassidy.png",
+  BlackJack: "/characters/blackjack.png",
+  ElGringo: "/characters/elgringo.png",
+  JesseJones: "/characters/jessejones.png",
+  JourdonaisPed: "/characters/pedroramirez.png",
+  KitCarlson: "/characters/kitcarlson.png",
+  LuckyDuke: "/characters/luckyduke.png",
+  ParisPete: "/characters/paulregret.png",
+  RoseDoolan: "/characters/rosedoolan.png",
+  SidKetchum: "/characters/sidketchum.png",
+  SlabTheKiller: "/characters/slab-thekiller.png",
+  SuzyLafayette: "/characters/suzylafayette.png",
+  VultureSam: "/characters/vulturesam.png",
+  JohnnyKisch: "/characters/jourdonnais.png",
+};
