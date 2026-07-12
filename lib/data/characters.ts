@@ -65,7 +65,7 @@ export const CHARACTER_IMAGE_SRC: Record<CharacterId, string> = {
   ParisPete: "/characters/paulregret.png",
   RoseDoolan: "/characters/rosedoolan.png",
   SidKetchum: "/characters/sidketchum.png",
-  SlabTheKiller: "/characters/slab-thekiller.png",
+  SlabTheKiller: "/characters/slab.png",
   SuzyLafayette: "/characters/suzylafayette.png",
   VultureSam: "/characters/vulturesam.png",
   JohnnyKisch: "/characters/jourdonnais.png",

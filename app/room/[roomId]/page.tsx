@@ -2,14 +2,16 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "next/navigation";
+import Image from "next/image";
 import { supabaseBrowser } from "@/lib/supabaseClient";
 import { fetchState, joinRoom, sendAction, startGame } from "@/lib/api";
-import { RedactedGameState } from "@/lib/types";
+import { CardKind, PlayingCard, RedactedGameState } from "@/lib/types";
 import { CARD_DEFS, kindOfCardId } from "@/lib/data/cards";
 import { CardFace } from "@/components/CardView";
+import { DeckPile } from "@/components/DeckPile";
 import { PlayerSeat, ROLE_LABEL } from "@/components/PlayerSeat";
 import { CharacterModal } from "@/components/CharacterModal";
-import { CHARACTERS } from "@/lib/data/characters";
+import { CHARACTERS, CHARACTER_IMAGE_SRC } from "@/lib/data/characters";
 import { ActionType } from "@/lib/actions";
 import { effectiveDistance, isInRange } from "@/lib/gameEngine";
 
@@ -34,6 +36,16 @@ export default function RoomPage() {
   const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
   const [pendingTargetCardId, setPendingTargetCardId] = useState<string | null>(null);
   const [infoPlayerId, setInfoPlayerId] = useState<string | null>(null);
+
+  // ---- Card animation state ----
+  // Ids of hand cards that just got drawn (deal-in animation), auto-cleared.
+  const [justDrawnIds, setJustDrawnIds] = useState<Set<string>>(new Set());
+  // Card currently being played, shown with a fly-away exit animation.
+  const [leavingCardId, setLeavingCardId] = useState<string | null>(null);
+  // Ghost card shown briefly in the "vừa đánh" table area after a play.
+  const [tableFlash, setTableFlash] = useState<{ key: number; card: PlayingCard; label: string; kind?: CardKind } | null>(null);
+  const prevHandIdsRef = useRef<Set<string>>(new Set());
+  const flashKeyRef = useRef(0);
 
   const playerIdRef = useRef<string | null>(null);
 
@@ -149,7 +161,27 @@ export default function RoomPage() {
       setPendingTargetCardId(null);
     } catch (e) {
       setError((e as Error).message);
+      // Action failed server-side (e.g. rejected move) — cancel the optimistic
+      // "flying away" animation so the card reappears in hand normally.
+      setLeavingCardId(null);
     }
+  }
+
+  // Kicks off the visual feedback for playing a card: the card in hand
+  // animates away, and a ghost of it briefly appears in the table area.
+  function animateCardPlay(cardId: string) {
+    const card = me?.hand?.find((c) => c.id === cardId);
+    if (!card) return;
+    const kind = kindOfCardId(cardId);
+    const def = kind ? CARD_DEFS[kind] : undefined;
+    flashKeyRef.current += 1;
+    const flashKey = flashKeyRef.current;
+    setLeavingCardId(cardId);
+    setTableFlash({ key: flashKey, card, label: def?.label ?? "?", kind });
+    setTimeout(() => setLeavingCardId(null), 380);
+    setTimeout(() => {
+      setTableFlash((prev) => (prev?.key === flashKey ? null : prev));
+    }, 1800);
   }
 
   const me = state && playerId ? state.players[playerId] : null;
@@ -169,6 +201,26 @@ export default function RoomPage() {
         return relA - relB;
       });
   }, [state, playerId]);
+
+  useEffect(() => {
+    const hand = me?.hand;
+    if (!hand) return;
+    const currentIds = new Set(hand.map((c) => c.id));
+    const prevIds = prevHandIdsRef.current;
+    const newlyDrawn = hand.filter((c) => !prevIds.has(c.id)).map((c) => c.id);
+    prevHandIdsRef.current = currentIds;
+    if (newlyDrawn.length === 0) return;
+    setJustDrawnIds((prev) => new Set([...prev, ...newlyDrawn]));
+    const timer = setTimeout(() => {
+      setJustDrawnIds((prev) => {
+        const next = new Set(prev);
+        newlyDrawn.forEach((id) => next.delete(id));
+        return next;
+      });
+    }, 550);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only re-run when the hand's card ids actually change
+  }, [me?.hand?.map((c) => c.id).join(",")]);
 
   if (!playerId) {
     return (
@@ -238,26 +290,45 @@ export default function RoomPage() {
           </p>
 
           {me.characterChosen ? (
-            <div className="text-center text-dust italic py-10">
-              Bạn đã chọn <span className="text-parchment font-semibold">{CHARACTERS[me.character as keyof typeof CHARACTERS]?.name}</span>.
-              <br />
-              Đang chờ những người còn lại chọn nhân vật...
+            <div className="flex flex-col items-center text-center py-6">
+              {me.character !== "Unknown" && (
+                <div className="w-32 aspect-[250/389] relative rounded-lg overflow-hidden border-2 border-rust shadow-[0_0_16px_rgba(166,61,47,0.5)] mb-4 animate-card-deal-in">
+                  <Image
+                    src={CHARACTER_IMAGE_SRC[me.character]}
+                    alt={CHARACTERS[me.character as keyof typeof CHARACTERS]?.name ?? ""}
+                    fill
+                    className="object-cover"
+                    sizes="128px"
+                  />
+                </div>
+              )}
+              <p className="text-dust italic">
+                Bạn đã chọn <span className="text-parchment font-semibold not-italic">{CHARACTERS[me.character as keyof typeof CHARACTERS]?.name}</span>.
+                <br />
+                Đang chờ những người còn lại chọn nhân vật...
+              </p>
             </div>
           ) : (
             <div className="grid sm:grid-cols-2 gap-4">
-              {(me.characterChoices ?? []).map((charId) => {
+              {(me.characterChoices ?? []).map((charId, i) => {
                 const c = CHARACTERS[charId];
                 return (
                   <button
                     key={charId}
                     onClick={() => act({ type: "CHOOSE_CHARACTER", playerId: playerId!, characterId: charId })}
-                    className="text-left rounded-lg border-2 border-dust/40 bg-leather/60 p-5 hover:border-rust hover:bg-rust/10 transition-colors"
+                    style={{ animationDelay: `${i * 90}ms` }}
+                    className="text-left rounded-lg border-2 border-dust/40 bg-leather/60 p-4 hover:border-rust hover:bg-rust/10 transition-colors flex gap-4 animate-card-deal-in"
                   >
-                    <div className="flex items-center justify-between mb-2">
-                      <h2 className="font-western text-xl text-rust">{c.name}</h2>
-                      <span className="text-xs text-dust">{c.maxHp} ♥</span>
+                    <div className="w-20 aspect-[250/389] relative flex-shrink-0 rounded overflow-hidden border border-dust/40">
+                      <Image src={CHARACTER_IMAGE_SRC[charId]} alt={c.name} fill className="object-cover" sizes="80px" />
                     </div>
-                    <p className="text-sm text-dust leading-relaxed">{c.ability}</p>
+                    <div className="min-w-0">
+                      <div className="flex items-center justify-between gap-2 mb-2">
+                        <h2 className="font-western text-xl text-rust">{c.name}</h2>
+                        <span className="text-xs text-dust whitespace-nowrap">{c.maxHp} ♥</span>
+                      </div>
+                      <p className="text-sm text-dust leading-relaxed">{c.ability}</p>
+                    </div>
                   </button>
                 );
               })}
@@ -293,6 +364,7 @@ export default function RoomPage() {
       setSelectedCardId(cardId);
       setPendingTargetCardId(cardId);
     } else {
+      animateCardPlay(cardId);
       act({ type: "PLAY_CARD", playerId: playerId!, cardId, kind: kind as ActionType extends { kind: infer K } ? K : never });
     }
   }
@@ -301,6 +373,7 @@ export default function RoomPage() {
     if (!pendingTargetCardId || !state) return;
     const card = me!.hand!.find((c) => c.id === pendingTargetCardId);
     if (!card) return;
+    animateCardPlay(card.id);
     act({
       type: "PLAY_CARD",
       playerId: playerId!,
@@ -342,9 +415,24 @@ export default function RoomPage() {
               {ROLE_LABEL[me.role] ?? me.role}
             </span>
           </div>
+          <DeckPile deckCount={state.deckCount} discardPile={state.discardPile} />
         </div>
 
         {error && <div className="mb-4 px-4 py-2 rounded bg-rust/20 border border-rust text-sm">{error}</div>}
+
+        {/* Ghost of the last card played, briefly shown on the table */}
+        {tableFlash && (
+          <div className="mb-4 flex items-center gap-3 justify-center">
+            <CardFace
+              key={tableFlash.key}
+              card={tableFlash.card}
+              label={tableFlash.label}
+              kind={tableFlash.kind}
+              animationClassName="animate-card-table"
+            />
+            <span className="text-dust text-sm italic">Vừa đánh: {tableFlash.label}</span>
+          </div>
+        )}
 
         {state.winner && (
           <div className="mb-6 px-4 py-3 rounded bg-rust/30 border-2 border-rust text-center font-western text-2xl">
@@ -397,6 +485,12 @@ export default function RoomPage() {
             {me.hand?.map((c) => {
               const kind = selectedKindOf(c.id);
               const def = CARD_DEFS[kind as keyof typeof CARD_DEFS];
+              const animationClassName =
+                c.id === leavingCardId
+                  ? "animate-card-play-out"
+                  : justDrawnIds.has(c.id)
+                  ? "animate-card-deal-in"
+                  : undefined;
               return (
                 <CardFace
                   key={c.id}
@@ -405,6 +499,7 @@ export default function RoomPage() {
                   kind={kindOfCardId(c.id)}
                   selected={selectedCardId === c.id}
                   onClick={() => handleHandCardClick(c.id, kind)}
+                  animationClassName={animationClassName}
                 />
               );
             })}

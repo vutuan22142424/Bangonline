@@ -30,3 +30,86 @@ body {
 .font-western {
   font-family: 'Rye', serif;
 }
+
+/* ---------- Card animations ---------- */
+
+/* A card freshly drawn into the hand: flies up from the deck, flips in. */
+@keyframes card-deal-in {
+  0% {
+    opacity: 0;
+    transform: translateY(70px) scale(0.55) rotate(-10deg);
+  }
+  55% {
+    opacity: 1;
+    transform: translateY(-10px) scale(1.08) rotate(3deg);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1) rotate(0deg);
+  }
+}
+.animate-card-deal-in {
+  animation: card-deal-in 0.5s cubic-bezier(0.22, 0.9, 0.32, 1.1) both;
+}
+
+/* A card leaving the hand when played: shrinks up and away. */
+@keyframes card-play-out {
+  0% {
+    opacity: 1;
+    transform: translateY(0) scale(1) rotate(0deg);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-90px) scale(0.5) rotate(12deg);
+  }
+}
+.animate-card-play-out {
+  animation: card-play-out 0.38s ease-in forwards;
+  pointer-events: none;
+}
+
+/* Ghost card that appears in the "vừa đánh" table area, then fades. */
+@keyframes card-table-in {
+  0% {
+    opacity: 0;
+    transform: scale(0.4) translateY(24px) rotate(-6deg);
+  }
+  55% {
+    opacity: 1;
+    transform: scale(1.1) translateY(-4px) rotate(2deg);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) translateY(0) rotate(0deg);
+  }
+}
+@keyframes card-table-out {
+  0% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(0.85) translateY(-6px);
+  }
+}
+.animate-card-table {
+  animation: card-table-in 0.4s cubic-bezier(0.22, 0.9, 0.32, 1.1) both,
+    card-table-out 0.4s ease-in 1.3s forwards;
+}
+
+/* Deck pile: small pulse whenever the number of cards left changes. */
+@keyframes deck-pulse {
+  0% {
+    transform: scale(1);
+  }
+  40% {
+    transform: scale(1.08) rotate(-2deg);
+  }
+  100% {
+    transform: scale(1) rotate(0deg);
+  }
+}
+.animate-deck-pulse {
+  animation: deck-pulse 0.35s ease-out;
+}

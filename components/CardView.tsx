@@ -39,13 +39,31 @@ const CARD_IMAGE_SRC: Record<CardKind, string> = {
   Winchester: "/cards/winchester.png",
 };
 
-export function CardBack({ small }: { small?: boolean }) {
+export function CardBack({
+  small,
+  count,
+  pulseKey,
+}: {
+  small?: boolean;
+  /** If provided, shows a little badge with the remaining card count. */
+  count?: number;
+  /** Change this value (e.g. to the count) to re-trigger the pulse animation. */
+  pulseKey?: number | string;
+}) {
   return (
     <div
-      className={`${small ? "w-10" : "w-16"} aspect-[250/389] rounded-md bg-gradient-to-br from-rust to-ink border-2 border-dust/50 flex items-center justify-center shadow relative overflow-hidden`}
+      key={pulseKey}
+      className={`${small ? "w-10" : "w-16"} aspect-[250/389] rounded-md bg-gradient-to-br from-rust to-ink border-2 border-dust/50 flex items-center justify-center shadow relative overflow-hidden ${
+        pulseKey !== undefined ? "animate-deck-pulse" : ""
+      }`}
     >
       <div className="absolute inset-1 rounded border border-dust/30" />
       <span className="font-western text-parchment/80 text-xs rotate-12 select-none">BANG!</span>
+      {count !== undefined && (
+        <span className="absolute bottom-0.5 right-0.5 leading-none text-[10px] font-bold bg-parchment text-ink rounded px-1 py-0.5 shadow">
+          {count}
+        </span>
+      )}
     </div>
   );
 }
@@ -57,6 +75,8 @@ export function CardFace({
   onClick,
   selected,
   small,
+  animationClassName,
+  count,
 }: {
   card: PlayingCard;
   label: string;
@@ -64,6 +84,10 @@ export function CardFace({
   onClick?: () => void;
   selected?: boolean;
   small?: boolean;
+  /** Extra class(es) for entrance/exit animations, e.g. "animate-card-deal-in". */
+  animationClassName?: string;
+  /** Optional badge, e.g. discard pile size when this card is the top of the pile. */
+  count?: number;
 }) {
   const isRed = card.suit === "Hearts" || card.suit === "Diamonds";
   const imageSrc = kind ? CARD_IMAGE_SRC[kind] : undefined;
@@ -74,7 +98,7 @@ export function CardFace({
       aria-label={`${label} - ${card.rank}${SUIT_SYMBOL[card.suit]}`}
       className={`${small ? "w-16" : "w-24"} aspect-[250/389] relative rounded-md overflow-hidden border-2 shadow transition-transform hover:-translate-y-1 bg-parchment ${
         selected ? "border-rust ring-2 ring-rust -translate-y-2" : "border-ink/30"
-      }`}
+      } ${animationClassName ?? ""}`}
     >
       {imageSrc && (
         <Image
@@ -96,6 +120,12 @@ export function CardFace({
         {card.rank}
         {SUIT_SYMBOL[card.suit]}
       </div>
+
+      {count !== undefined && (
+        <span className="absolute bottom-0.5 right-0.5 leading-none text-[10px] font-bold bg-parchment text-ink rounded px-1 py-0.5 shadow">
+          {count}
+        </span>
+      )}
     </button>
   );
 }
