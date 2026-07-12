@@ -5,7 +5,7 @@ import { useParams } from "next/navigation";
 import Image from "next/image";
 import { supabaseBrowser } from "@/lib/supabaseClient";
 import { fetchState, joinRoom, sendAction, startGame } from "@/lib/api";
-import { CardKind, PlayingCard, RedactedGameState } from "@/lib/types";
+import { RedactedGameState } from "@/lib/types";
 import { CARD_DEFS, kindOfCardId } from "@/lib/data/cards";
 import { CardFace } from "@/components/CardView";
 import { DeckPile } from "@/components/DeckPile";
@@ -40,12 +40,11 @@ export default function RoomPage() {
   // ---- Card animation state ----
   // Ids of hand cards that just got drawn (deal-in animation), auto-cleared.
   const [justDrawnIds, setJustDrawnIds] = useState<Set<string>>(new Set());
-  // Card currently being played, shown with a fly-away exit animation.
+  // Card currently being played, shown with a fly-away exit animation
+  // (the card then lands in the messy discard pile via DeckPile once the
+  // server confirms the play and refreshes state.discardPile).
   const [leavingCardId, setLeavingCardId] = useState<string | null>(null);
-  // Ghost card shown briefly in the "vừa đánh" table area after a play.
-  const [tableFlash, setTableFlash] = useState<{ key: number; card: PlayingCard; label: string; kind?: CardKind } | null>(null);
   const prevHandIdsRef = useRef<Set<string>>(new Set());
-  const flashKeyRef = useRef(0);
 
   const playerIdRef = useRef<string | null>(null);
 
@@ -167,21 +166,15 @@ export default function RoomPage() {
     }
   }
 
-  // Kicks off the visual feedback for playing a card: the card in hand
-  // animates away, and a ghost of it briefly appears in the table area.
+  // Kicks off the fly-away animation for a card as soon as it's played,
+  // for immediate feedback while the server request is in flight. Once the
+  // server confirms and state.discardPile refreshes, the card shows up
+  // (freshly animated) in the messy pile rendered by <DeckPile>.
   function animateCardPlay(cardId: string) {
     const card = me?.hand?.find((c) => c.id === cardId);
     if (!card) return;
-    const kind = kindOfCardId(cardId);
-    const def = kind ? CARD_DEFS[kind] : undefined;
-    flashKeyRef.current += 1;
-    const flashKey = flashKeyRef.current;
     setLeavingCardId(cardId);
-    setTableFlash({ key: flashKey, card, label: def?.label ?? "?", kind });
     setTimeout(() => setLeavingCardId(null), 380);
-    setTimeout(() => {
-      setTableFlash((prev) => (prev?.key === flashKey ? null : prev));
-    }, 1800);
   }
 
   const me = state && playerId ? state.players[playerId] : null;
@@ -419,20 +412,6 @@ export default function RoomPage() {
         </div>
 
         {error && <div className="mb-4 px-4 py-2 rounded bg-rust/20 border border-rust text-sm">{error}</div>}
-
-        {/* Ghost of the last card played, briefly shown on the table */}
-        {tableFlash && (
-          <div className="mb-4 flex items-center gap-3 justify-center">
-            <CardFace
-              key={tableFlash.key}
-              card={tableFlash.card}
-              label={tableFlash.label}
-              kind={tableFlash.kind}
-              animationClassName="animate-card-table"
-            />
-            <span className="text-dust text-sm italic">Vừa đánh: {tableFlash.label}</span>
-          </div>
-        )}
 
         {state.winner && (
           <div className="mb-6 px-4 py-3 rounded bg-rust/30 border-2 border-rust text-center font-western text-2xl">
