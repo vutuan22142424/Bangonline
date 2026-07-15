@@ -64,9 +64,13 @@ export function createInitialGameState(
     players,
     pendingResponse: null,
     bangPlayedThisTurn: {},
+    beerPlayedThisTurn: {},
     log: [`Ván bắt đầu. Mọi người hãy chọn nhân vật của mình.`],
     winner: null,
     version: 1,
+    eventSeq: 0,
+    lastPlayedCard: null,
+    lastJudgeDraw: null,
   };
 }
 
@@ -206,6 +210,52 @@ function log(state: GameState, msg: string) {
   if (state.log.length > 200) state.log.shift();
 }
 
+/** Increments the shared event counter and returns the new value, so a
+ * PlayedCardEvent/JudgeDrawEvent gets a unique, ever-increasing `seq` that
+ * clients can compare against the last one they've already animated. */
+function bumpSeq(state: GameState): number {
+  state.eventSeq += 1;
+  return state.eventSeq;
+}
+
+/**
+ * Shared "judge draw" for anything that flips a card from the deck to
+ * decide an outcome (Dynamite check, Jail check, Barrel dodge attempt...).
+ * Always discards the drawn card(s) and always publishes the result via
+ * `state.lastJudgeDraw` so every client can see the flip (previously this
+ * only happened server-side and was invisible to players).
+ *
+ * Lucky Duke draws 2 cards instead of 1 and gets to use whichever one is
+ * more favorable (`isGood`), matching his character ability.
+ */
+export function drawJudgeCard(
+  state: GameState,
+  playerId: string,
+  reason: "Dynamite" | "Jail" | "Barrel",
+  isGood: (c: PlayingCard) => boolean,
+  labelFor: (chosen: PlayingCard, good: boolean) => string
+): { chosen: PlayingCard; good: boolean } {
+  const player = state.players[playerId];
+  const isLucky = player.character === "LuckyDuke";
+  const drawnCount = isLucky ? 2 : 1;
+  const drawn = drawFromDeck(state, drawnCount);
+  drawn.forEach((c) => discard(state, c));
+  let chosen = drawn[0];
+  if (isLucky && drawn.length === 2) {
+    chosen = drawn.find(isGood) ?? drawn[0];
+  }
+  const good = isGood(chosen);
+  state.lastJudgeDraw = {
+    seq: bumpSeq(state),
+    playerId,
+    card: chosen,
+    reason,
+    success: good,
+    resultLabel: labelFor(chosen, good) + (isLucky ? " (Lucky Duke: chọn lá tốt hơn trong 2 lá)" : ""),
+  };
+  return { chosen, good };
+}
+
 // ---------------------------------------------------------------------------
 // Turn flow
 // ---------------------------------------------------------------------------
@@ -213,15 +263,20 @@ function log(state: GameState, msg: string) {
 export function startTurnDrawPhase(state: GameState) {
   const p = state.players[state.currentPlayerId!];
   state.bangPlayedThisTurn[p.id] = 0;
+  state.beerPlayedThisTurn[p.id] = 0;
 
   // Dynamite check (attached as blue card)
   const dynamite = p.inPlay.find((c) => cardKindOf(c) === "Dynamite");
   if (dynamite) {
-    const flip = drawFromDeck(state, 1)[0];
-    const exploded = flip.suit === "Spades" && ["2", "3", "4", "5", "6", "7", "8", "9"].includes(flip.rank);
-    discard(state, flip);
+    const { good: safe } = drawJudgeCard(
+      state,
+      p.id,
+      "Dynamite",
+      (c) => !(c.suit === "Spades" && ["2", "3", "4", "5", "6", "7", "8", "9"].includes(c.rank)),
+      (_c, good) => (good ? "Thoát! Chuyền cho người kế tiếp" : "2-9 Bích — Nổ! Mất 3 máu")
+    );
     p.inPlay = p.inPlay.filter((c) => c.id !== dynamite.id);
-    if (exploded) {
+    if (!safe) {
       log(state, `${p.name} bị Dynamite nổ! Mất 3 máu.`);
       applyDamage(state, p.id, 3, null);
       discard(state, dynamite);
@@ -235,12 +290,17 @@ export function startTurnDrawPhase(state: GameState) {
   // Jail check (attached by an opponent)
   const jail = p.inPlay.find((c) => cardKindOf(c) === "Jail");
   if (jail && p.isAlive) {
-    const flip = drawFromDeck(state, 1)[0];
-    discard(state, flip);
+    const { good: escaped } = drawJudgeCard(
+      state,
+      p.id,
+      "Jail",
+      (c) => c.suit === "Hearts",
+      (_c, good) => (good ? "Ra Cơ — Thoát khỏi Jail!" : "Không phải Cơ — Bị giam, mất lượt này")
+    );
     p.inPlay = p.inPlay.filter((c) => c.id !== jail.id);
     discard(state, jail);
-    if (flip.suit === "Diamonds") {
-      log(state, `${p.name} thoát Jail (ra Rô).`);
+    if (escaped) {
+      log(state, `${p.name} thoát Jail (ra Cơ).`);
     } else {
       log(state, `${p.name} bị giam, mất lượt này.`);
       state.phase = "discard";
@@ -249,10 +309,56 @@ export function startTurnDrawPhase(state: GameState) {
     }
   }
 
+  // Jesse Jones: may take the first card from another player's hand instead
+  // of drawing from the deck. Only offer the choice if someone else still
+  // has cards; otherwise just fall through to a normal draw.
+  if (p.character === "JesseJones") {
+    const eligible = Object.values(state.players).some((o) => o.isAlive && o.id !== p.id && o.hand.length > 0);
+    if (eligible) {
+      state.pendingResponse = { kind: "JesseDrawChoice", fromPlayerId: p.id, targetPlayerId: p.id };
+      log(state, `${p.name} (Jesse Jones) có thể chọn rút bài từ tay người khác hoặc từ bộ bài.`);
+      return;
+    }
+  }
+
+  // Pedro Ramirez (JourdonaisPed): may take the top card of the discard
+  // pile instead of drawing the first card from the deck.
+  if (p.character === "JourdonaisPed" && state.discardPile.length > 0) {
+    state.pendingResponse = { kind: "PedroDrawChoice", fromPlayerId: p.id, targetPlayerId: p.id };
+    log(state, `${p.name} (Pedro Ramirez) có thể chọn lấy lá trên nóc chồng bỏ hoặc rút từ bộ bài.`);
+    return;
+  }
+
+  // Kit Carlson: looks at the top 3 cards, keeps 2, puts 1 back on the
+  // bottom of the deck unseen by anyone else.
+  if (p.character === "KitCarlson") {
+    const pool = drawFromDeck(state, 3);
+    state.pendingResponse = { kind: "KitCarlsonDraw", fromPlayerId: p.id, targetPlayerId: p.id, data: { pool } };
+    log(state, `${p.name} (Kit Carlson) lật 3 lá trên cùng để chọn 2 lá giữ lại.`);
+    return;
+  }
+
   const drawCount = 2;
   const drawn = drawFromDeck(state, drawCount);
   p.hand.push(...drawn);
   log(state, `${p.name} rút ${drawCount} lá.`);
+
+  // Black Jack: if the second card drawn is Hearts or Diamonds, reveal it
+  // and draw one extra card.
+  if (p.character === "BlackJack" && drawn[1] && (drawn[1].suit === "Hearts" || drawn[1].suit === "Diamonds")) {
+    state.lastJudgeDraw = {
+      seq: bumpSeq(state),
+      playerId: p.id,
+      card: drawn[1],
+      reason: "BlackJack",
+      success: true,
+      resultLabel: `${drawn[1].suit === "Hearts" ? "Cơ" : "Rô"}! Rút thêm 1 lá`,
+    };
+    const extra = drawFromDeck(state, 1);
+    p.hand.push(...extra);
+    log(state, `${p.name} (Black Jack) lá thứ 2 là ${drawn[1].suit === "Hearts" ? "Cơ" : "Rô"}, rút thêm 1 lá.`);
+  }
+
   state.phase = "play";
 }
 

@@ -5,10 +5,13 @@ import { useParams } from "next/navigation";
 import Image from "next/image";
 import { supabaseBrowser } from "@/lib/supabaseClient";
 import { fetchState, joinRoom, sendAction, startGame } from "@/lib/api";
-import { RedactedGameState } from "@/lib/types";
+import { PlayingCard, RedactedGameState } from "@/lib/types";
 import { CARD_DEFS, kindOfCardId } from "@/lib/data/cards";
 import { CardFace } from "@/components/CardView";
 import { DeckPile } from "@/components/DeckPile";
+import { DiscardHistoryModal } from "@/components/DiscardHistoryModal";
+import { JudgeDrawReveal } from "@/components/JudgeDrawReveal";
+import { FlyingCard } from "@/components/FlyingCard";
 import { PlayerSeat, ROLE_LABEL } from "@/components/PlayerSeat";
 import { CharacterModal } from "@/components/CharacterModal";
 import { CHARACTERS, CHARACTER_IMAGE_SRC } from "@/lib/data/characters";
@@ -23,6 +26,23 @@ interface LobbyPlayer {
 
 const TARGETABLE_KINDS = new Set(["Bang", "Panic", "CatBalou", "Duel", "Jail"]);
 
+/** Even spread of the other players across the top arc of the oval table
+ * (the viewer's own seat sits below, outside this arc). angleDeg 0 = top
+ * dead-center; the arc widens symmetrically to both sides as there are
+ * more players. */
+function otherSeatStyle(index: number, total: number): React.CSSProperties {
+  const spread = Math.min(230, 90 + total * 24);
+  const start = -spread / 2;
+  const step = total > 1 ? spread / (total - 1) : 0;
+  const angleDeg = start + step * index;
+  const angleRad = (angleDeg * Math.PI) / 180;
+  const rx = 46;
+  const ry = 42;
+  const left = 50 + rx * Math.sin(angleRad);
+  const top = 50 - ry * Math.cos(angleRad);
+  return { left: `${left}%`, top: `${top}%` };
+}
+
 export default function RoomPage() {
   const params = useParams<{ roomId: string }>();
   const roomId = params.roomId;
@@ -36,6 +56,17 @@ export default function RoomPage() {
   const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
   const [pendingTargetCardId, setPendingTargetCardId] = useState<string | null>(null);
   const [infoPlayerId, setInfoPlayerId] = useState<string | null>(null);
+  const [showHistory, setShowHistory] = useState(false);
+
+  // ---- Sid Ketchum: pick 2 hand cards to discard for +1 HP ----
+  const [sidMode, setSidMode] = useState(false);
+  const [sidSelected, setSidSelected] = useState<string[]>([]);
+
+  // ---- Slab the Killer: shooter requires 2 Missed! to dodge ----
+  const [slabSelected, setSlabSelected] = useState<string[]>([]);
+
+  // ---- Kit Carlson: choose 2 of 3 revealed cards to keep ----
+  const [kitSelected, setKitSelected] = useState<string[]>([]);
 
   // ---- Card animation state ----
   // Ids of hand cards that just got drawn (deal-in animation), auto-cleared.
@@ -45,6 +76,21 @@ export default function RoomPage() {
   // server confirms the play and refreshes state.discardPile).
   const [leavingCardId, setLeavingCardId] = useState<string | null>(null);
   const prevHandIdsRef = useRef<Set<string>>(new Set());
+
+  // A flying card overlay for OTHER players' plays: reactive, triggered once
+  // the server confirms (via state.lastPlayedCard), flying from that
+  // player's seat position to the center discard pile.
+  const [flight, setFlight] = useState<{
+    id: number;
+    card: PlayingCard;
+    kind?: string;
+    label: string;
+    from: { x: number; y: number; width: number; height: number };
+    to: { x: number; y: number; width: number; height: number };
+  } | null>(null);
+  const seatElRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+  const discardPileElRef = useRef<HTMLDivElement | null>(null);
+  const lastPlayedSeqRef = useRef<number | null>(null);
 
   const playerIdRef = useRef<string | null>(null);
 
@@ -126,7 +172,7 @@ export default function RoomPage() {
       } else if (roomStatus === "lobby") {
         refreshLobby();
       }
-    }, 2000);
+    }, 500);
 
     return () => clearInterval(interval);
   }, [playerId, roomStatus, refreshGameState, refreshLobby]);
@@ -158,6 +204,10 @@ export default function RoomPage() {
       setState(s);
       setSelectedCardId(null);
       setPendingTargetCardId(null);
+      setSidMode(false);
+      setSidSelected([]);
+      setSlabSelected([]);
+      setKitSelected([]);
     } catch (e) {
       setError((e as Error).message);
       // Action failed server-side (e.g. rejected move) — cancel the optimistic
@@ -175,6 +225,11 @@ export default function RoomPage() {
     if (!card) return;
     setLeavingCardId(cardId);
     setTimeout(() => setLeavingCardId(null), 380);
+  }
+
+  function registerSeatEl(id: string, el: HTMLDivElement | null) {
+    if (el) seatElRefs.current.set(id, el);
+    else seatElRefs.current.delete(id);
   }
 
   const me = state && playerId ? state.players[playerId] : null;
@@ -195,6 +250,40 @@ export default function RoomPage() {
       });
   }, [state, playerId]);
 
+  // Animate other players' played cards flying from their seat to the
+  // center discard pile. Guards against animating stale events from before
+  // this client was even mounted (e.g. right after a page reload mid-game).
+  useEffect(() => {
+    const evt = state?.lastPlayedCard;
+    if (!evt) return;
+    if (lastPlayedSeqRef.current === null) {
+      // First event we've ever seen this session — remember it but don't animate.
+      lastPlayedSeqRef.current = evt.seq;
+      return;
+    }
+    if (evt.seq <= lastPlayedSeqRef.current) return;
+    lastPlayedSeqRef.current = evt.seq;
+    if (!evt.toDiscard) return; // equip cards stay in play, no center flight
+    if (evt.playerId === playerId) return; // already animated optimistically in my own hand
+
+    const fromEl = seatElRefs.current.get(evt.playerId);
+    const toEl = discardPileElRef.current;
+    if (!fromEl || !toEl) return;
+    const fromRect = fromEl.getBoundingClientRect();
+    const toRect = toEl.getBoundingClientRect();
+    const label = CARD_DEFS[evt.kind]?.label ?? "?";
+    setFlight({
+      id: evt.seq,
+      card: evt.card,
+      kind: evt.kind,
+      label,
+      from: { x: fromRect.x, y: fromRect.y, width: fromRect.width, height: fromRect.height },
+      to: { x: toRect.x, y: toRect.y, width: toRect.width, height: toRect.height },
+    });
+  }, [state?.lastPlayedCard, playerId]);
+
+  const handIdsKey = me?.hand?.map((c) => c.id).join(",") ?? "";
+
   useEffect(() => {
     const hand = me?.hand;
     if (!hand) return;
@@ -212,8 +301,8 @@ export default function RoomPage() {
       });
     }, 550);
     return () => clearTimeout(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- only re-run when the hand's card ids actually change
-  }, [me?.hand?.map((c) => c.id).join(",")]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentionally keyed by handIdsKey (content), not the me.hand object reference
+  }, [handIdsKey]);
 
   if (!playerId) {
     return (
@@ -352,6 +441,10 @@ export default function RoomPage() {
   }
 
   function handleHandCardClick(cardId: string, kind: string) {
+    if (sidMode) {
+      toggleSidSelection(cardId);
+      return;
+    }
     if (!isMyTurn || pending) return;
     if (cardNeedsTarget(kind)) {
       setSelectedCardId(cardId);
@@ -360,6 +453,26 @@ export default function RoomPage() {
       animateCardPlay(cardId);
       act({ type: "PLAY_CARD", playerId: playerId!, cardId, kind: kind as ActionType extends { kind: infer K } ? K : never });
     }
+  }
+
+  function toggleSidSelection(cardId: string) {
+    setSidSelected((prev) => {
+      if (prev.includes(cardId)) return prev.filter((id) => id !== cardId);
+      if (prev.length >= 2) return prev;
+      const next = [...prev, cardId];
+      if (next.length === 2) {
+        act({ type: "USE_SID_KETCHUM", playerId: playerId!, cardIds: next });
+      }
+      return next;
+    });
+  }
+
+  function toggleSlabSelection(cardId: string) {
+    setSlabSelected((prev) => {
+      if (prev.includes(cardId)) return prev.filter((id) => id !== cardId);
+      if (prev.length >= 2) return prev;
+      return [...prev, cardId];
+    });
   }
 
   function handleTargetClick(targetId: string) {
@@ -380,22 +493,47 @@ export default function RoomPage() {
     return kindOfCardId(cardId) ?? "Bang";
   }
 
+  const canUseSidKetchum =
+    me.character === "SidKetchum" && isMyTurn && !pending && state.phase === "play" && me.hp < me.maxHp && (me.hand?.length ?? 0) >= 2;
+
   return (
     <main className="min-h-screen p-4 md:p-8">
       <div className="max-w-6xl mx-auto">
         <header className="flex items-center justify-between mb-4">
           <h1 className="font-western text-3xl text-rust">BANG! — Phòng {roomId}</h1>
-          {isMyTurn && !pending && (
-            <button
-              onClick={() => act({ type: "END_TURN", playerId: playerId! })}
-              className="px-4 py-2 rounded bg-rust hover:bg-rust/80 font-semibold"
-            >
-              Kết thúc lượt
-            </button>
-          )}
+          <div className="flex items-center gap-2">
+            {canUseSidKetchum && !sidMode && (
+              <button
+                onClick={() => setSidMode(true)}
+                className="px-3 py-2 rounded border border-dust/60 hover:border-rust text-sm"
+                title="Bỏ 2 lá bất kỳ trên tay để hồi 1 máu"
+              >
+                Sid Ketchum: hồi máu
+              </button>
+            )}
+            {sidMode && (
+              <button
+                onClick={() => {
+                  setSidMode(false);
+                  setSidSelected([]);
+                }}
+                className="px-3 py-2 rounded border border-dust/60 text-sm"
+              >
+                Hủy ({sidSelected.length}/2)
+              </button>
+            )}
+            {isMyTurn && !pending && !sidMode && (
+              <button
+                onClick={() => act({ type: "END_TURN", playerId: playerId! })}
+                className="px-4 py-2 rounded bg-rust hover:bg-rust/80 font-semibold"
+              >
+                Kết thúc lượt
+              </button>
+            )}
+          </div>
         </header>
 
-        <div className="mb-6 flex flex-wrap gap-4 items-center justify-between text-sm bg-ink/40 p-3 rounded border border-dust/20">
+        <div className="mb-4 flex flex-wrap gap-4 items-center justify-between text-sm bg-ink/40 p-3 rounded border border-dust/20">
           <div>
             <span className="text-dust">Lượt chơi: </span>
             <span className={`font-semibold ${isMyTurn ? "text-rust animate-pulse" : "text-parchment"}`}>
@@ -404,11 +542,8 @@ export default function RoomPage() {
           </div>
           <div>
             <span className="text-dust">Vai trò của bạn: </span>
-            <span className="font-semibold text-rust">
-              {ROLE_LABEL[me.role] ?? me.role}
-            </span>
+            <span className="font-semibold text-rust">{ROLE_LABEL[me.role] ?? me.role}</span>
           </div>
-          <DeckPile deckCount={state.deckCount} discardPile={state.discardPile} />
         </div>
 
         {error && <div className="mb-4 px-4 py-2 rounded bg-rust/20 border border-rust text-sm">{error}</div>}
@@ -419,30 +554,70 @@ export default function RoomPage() {
           </div>
         )}
 
-        {/* Other players */}
-        <div className="flex flex-wrap gap-3 mb-6">
-          {others.map((p) => {
-            const distance = state && playerId ? effectiveDistance(state, playerId, p.id) : undefined;
-            const inRange = state && playerId ? isInRange(state, playerId, p.id) : false;
+        {/* Round table: other players seated around the edge, deck + discard
+            pile (and any judge-draw reveal) in the center. */}
+        <div className="relative w-full mx-auto mb-6" style={{ aspectRatio: "16 / 10", maxWidth: 880 }}>
+          <div className="absolute inset-[9%] rounded-[50%] bg-ink/50 border-4 border-dust/20 shadow-[inset_0_0_50px_rgba(0,0,0,0.55)]" />
+
+          <div className="absolute inset-0 flex items-center justify-center">
+            <DeckPile
+              deckCount={state.deckCount}
+              discardPile={state.discardPile}
+              discardRef={discardPileElRef}
+              onDiscardClick={() => setShowHistory(true)}
+            />
+          </div>
+
+          {others.map((p, i) => {
+            const distance = effectiveDistance(state, playerId!, p.id);
+            const inRange = isInRange(state, playerId!, p.id);
+            const style = otherSeatStyle(i, others.length);
             return (
-              <PlayerSeat
+              <div
                 key={p.id}
-                player={p}
-                isMe={false}
-                isCurrentTurn={state.currentPlayerId === p.id}
-                isTargetable={!!pendingTargetCardId}
-                onTargetClick={() => handleTargetClick(p.id)}
-                onInfoClick={() => setInfoPlayerId(p.id)}
-                distance={distance}
-                inRange={inRange}
-              />
+                ref={(el) => registerSeatEl(p.id, el)}
+                className="absolute -translate-x-1/2 -translate-y-1/2"
+                style={style}
+              >
+                <PlayerSeat
+                  player={p}
+                  isMe={false}
+                  isCurrentTurn={state.currentPlayerId === p.id}
+                  isTargetable={!!pendingTargetCardId}
+                  onTargetClick={() => handleTargetClick(p.id)}
+                  onInfoClick={() => setInfoPlayerId(p.id)}
+                  distance={distance}
+                  inRange={inRange}
+                />
+              </div>
             );
           })}
+
+          <JudgeDrawReveal
+            event={state.lastJudgeDraw}
+            playerName={state.lastJudgeDraw ? state.players[state.lastJudgeDraw.playerId]?.name : undefined}
+          />
         </div>
 
         {/* Pending response banner */}
         {pending && isMyResponse && (
-          <ResponsePanel pending={pending} me={me} act={act} playerId={playerId!} />
+          <ResponsePanel
+            pending={pending}
+            me={me}
+            state={state}
+            act={act}
+            playerId={playerId!}
+            slabSelected={slabSelected}
+            onToggleSlab={toggleSlabSelection}
+            kitSelected={kitSelected}
+            onToggleKit={(id) =>
+              setKitSelected((prev) => {
+                if (prev.includes(id)) return prev.filter((x) => x !== id);
+                if (prev.length >= 2) return prev;
+                return [...prev, id];
+              })
+            }
+          />
         )}
         {pending && !isMyResponse && (
           <div className="mb-4 text-dust text-sm italic">
@@ -459,7 +634,12 @@ export default function RoomPage() {
 
         {/* My seat + hand */}
         <div className="border-t-2 border-dust/30 pt-4">
-          <PlayerSeat player={me} isMe isCurrentTurn={isMyTurn} onInfoClick={() => setInfoPlayerId(me.id)} />
+          <div ref={(el) => registerSeatEl(me.id, el)}>
+            <PlayerSeat player={me} isMe isCurrentTurn={isMyTurn} onInfoClick={() => setInfoPlayerId(me.id)} />
+          </div>
+          {sidMode && (
+            <p className="mt-3 text-sm text-rust italic">Chọn 2 lá bất kỳ trên tay để bỏ, hồi 1 máu (Sid Ketchum).</p>
+          )}
           <div className="mt-4 flex flex-wrap gap-2">
             {me.hand?.map((c) => {
               const kind = selectedKindOf(c.id);
@@ -470,16 +650,18 @@ export default function RoomPage() {
                   : justDrawnIds.has(c.id)
                   ? "animate-card-deal-in"
                   : undefined;
+              const isSidSelected = sidMode && sidSelected.includes(c.id);
               return (
-                <CardFace
-                  key={c.id}
-                  card={c}
-                  label={def?.label ?? "?"}
-                  kind={kindOfCardId(c.id)}
-                  selected={selectedCardId === c.id}
-                  onClick={() => handleHandCardClick(c.id, kind)}
-                  animationClassName={animationClassName}
-                />
+                <div key={c.id} className={isSidSelected ? "ring-2 ring-rust rounded-md" : undefined}>
+                  <CardFace
+                    card={c}
+                    label={def?.label ?? "?"}
+                    kind={kindOfCardId(c.id)}
+                    selected={selectedCardId === c.id || isSidSelected}
+                    onClick={() => handleHandCardClick(c.id, kind)}
+                    animationClassName={animationClassName}
+                  />
+                </div>
               );
             })}
           </div>
@@ -496,6 +678,22 @@ export default function RoomPage() {
           onClose={() => setInfoPlayerId(null)}
         />
       )}
+
+      {showHistory && (
+        <DiscardHistoryModal discardPile={state.discardPile} onClose={() => setShowHistory(false)} />
+      )}
+
+      {flight && (
+        <FlyingCard
+          key={flight.id}
+          card={flight.card}
+          kind={flight.kind as never}
+          label={flight.label}
+          from={flight.from}
+          to={flight.to}
+          onDone={() => setFlight(null)}
+        />
+      )}
     </main>
   );
 }
@@ -503,19 +701,96 @@ export default function RoomPage() {
 function ResponsePanel({
   pending,
   me,
+  state,
   act,
   playerId,
+  slabSelected,
+  onToggleSlab,
+  kitSelected,
+  onToggleKit,
 }: {
   pending: NonNullable<RedactedGameState["pendingResponse"]>;
   me: RedactedGameState["players"][string];
+  state: RedactedGameState;
   act: (a: ActionType) => void;
   playerId: string;
+  slabSelected: string[];
+  onToggleSlab: (id: string) => void;
+  kitSelected: string[];
+  onToggleKit: (id: string) => void;
 }) {
   if (pending.kind === "BangResponse") {
-    const missed = me.hand?.find((c) => kindOfCardId(c.id) === "Missed");
+    const shooter = state.players[pending.fromPlayerId];
+    const requiredCount = shooter?.character === "SlabTheKiller" ? 2 : 1;
+    const dodgeCards = (me.hand ?? []).filter((c) => {
+      const k = kindOfCardId(c.id);
+      return k === "Missed" || (me.character === "CalamityJanet" && k === "Bang");
+    });
+    const hasBarrel = (me.inPlay ?? []).some((c) => kindOfCardId(c.id) === "Barrel") || me.character === "JohnnyKisch";
+    const canTryBarrel = hasBarrel && !pending.data?.barrelAttempted;
+
+    if (requiredCount === 2) {
+      return (
+        <div className="mb-4 p-4 rounded bg-rust/20 border border-rust">
+          <p className="mb-2">
+            Bạn bị {shooter?.name} (Slab the Killer) bắn! Cần <b>2</b> lá Missed! để né.
+          </p>
+          <div className="flex gap-2 flex-wrap mb-2">
+            {dodgeCards.map((c) => {
+              const kind = kindOfCardId(c.id);
+              const label = kind ? CARD_DEFS[kind].label : "?";
+              return (
+                <CardFace
+                  key={c.id}
+                  card={c}
+                  label={label}
+                  kind={kind}
+                  small
+                  selected={slabSelected.includes(c.id)}
+                  onClick={() => onToggleSlab(c.id)}
+                />
+              );
+            })}
+          </div>
+          <div className="flex gap-2">
+            {canTryBarrel && (
+              <button
+                onClick={() => act({ type: "ATTEMPT_BARREL", playerId })}
+                className="px-3 py-1 rounded border border-dust/60 hover:border-rust"
+              >
+                Thử Barrel
+              </button>
+            )}
+            <button
+              disabled={slabSelected.length !== 2}
+              onClick={() => act({ type: "RESPOND_MISSED", playerId, cardId: null, cardIds: slabSelected })}
+              className="px-3 py-1 rounded bg-parchment text-ink font-semibold disabled:opacity-40"
+            >
+              Dùng 2 Missed! đã chọn
+            </button>
+            <button
+              onClick={() => act({ type: "RESPOND_MISSED", playerId, cardId: null })}
+              className="px-3 py-1 rounded border border-dust/60"
+            >
+              Chịu 1 máu
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    const missed = dodgeCards[0];
     return (
-      <div className="mb-4 p-4 rounded bg-rust/20 border border-rust flex items-center gap-3">
+      <div className="mb-4 p-4 rounded bg-rust/20 border border-rust flex items-center gap-3 flex-wrap">
         <span>Bạn bị bắn! Dùng Missed! để né, hoặc chịu trận.</span>
+        {canTryBarrel && (
+          <button
+            onClick={() => act({ type: "ATTEMPT_BARREL", playerId })}
+            className="px-3 py-1 rounded border border-dust/60 hover:border-rust"
+          >
+            Thử Barrel
+          </button>
+        )}
         {missed && (
           <button
             onClick={() => act({ type: "RESPOND_MISSED", playerId, cardId: missed.id })}
@@ -534,8 +809,37 @@ function ResponsePanel({
     );
   }
 
+  if (pending.kind === "GatlingResponse") {
+    const missed = (me.hand ?? []).find((c) => {
+      const k = kindOfCardId(c.id);
+      return k === "Missed" || (me.character === "CalamityJanet" && k === "Bang");
+    });
+    return (
+      <div className="mb-4 p-4 rounded bg-rust/20 border border-rust flex items-center gap-3">
+        <span>Trúng Gatling! Dùng Missed! để né, hoặc chịu trận.</span>
+        {missed && (
+          <button
+            onClick={() => act({ type: "RESPOND_GATLING", playerId, cardId: missed.id })}
+            className="px-3 py-1 rounded bg-parchment text-ink font-semibold"
+          >
+            Dùng Missed!
+          </button>
+        )}
+        <button
+          onClick={() => act({ type: "RESPOND_GATLING", playerId, cardId: null })}
+          className="px-3 py-1 rounded border border-dust/60"
+        >
+          Chịu 1 máu
+        </button>
+      </div>
+    );
+  }
+
   if (pending.kind === "DuelResponse") {
-    const bang = me.hand?.find((c) => kindOfCardId(c.id) === "Bang");
+    const bang = (me.hand ?? []).find((c) => {
+      const k = kindOfCardId(c.id);
+      return k === "Bang" || (me.character === "CalamityJanet" && k === "Missed");
+    });
     return (
       <div className="mb-4 p-4 rounded bg-rust/20 border border-rust flex items-center gap-3">
         <span>Duel! Đánh Bang! để tiếp tục, hoặc chịu thua.</span>
@@ -558,7 +862,10 @@ function ResponsePanel({
   }
 
   if (pending.kind === "IndiansResponse") {
-    const bang = me.hand?.find((c) => kindOfCardId(c.id) === "Bang");
+    const bang = (me.hand ?? []).find((c) => {
+      const k = kindOfCardId(c.id);
+      return k === "Bang" || (me.character === "CalamityJanet" && k === "Missed");
+    });
     return (
       <div className="mb-4 p-4 rounded bg-rust/20 border border-rust flex items-center gap-3">
         <span>Indians! Bỏ Bang! hoặc mất 1 máu.</span>
@@ -575,6 +882,87 @@ function ResponsePanel({
           className="px-3 py-1 rounded border border-dust/60"
         >
           Chịu 1 máu
+        </button>
+      </div>
+    );
+  }
+
+  if (pending.kind === "JesseDrawChoice") {
+    const others = Object.values(state.players).filter((p) => p.isAlive && p.id !== playerId && p.handCount > 0);
+    return (
+      <div className="mb-4 p-4 rounded bg-rust/20 border border-rust">
+        <p className="mb-2">Jesse Jones: rút lá đầu tiên từ tay 1 người khác, hoặc rút bình thường.</p>
+        <div className="flex gap-2 flex-wrap">
+          <button
+            onClick={() => act({ type: "CHOOSE_JESSE_DRAW", playerId })}
+            className="px-3 py-1 rounded border border-dust/60 hover:border-rust"
+          >
+            Rút 2 lá từ bộ bài
+          </button>
+          {others.map((p) => (
+            <button
+              key={p.id}
+              onClick={() => act({ type: "CHOOSE_JESSE_DRAW", playerId, targetId: p.id })}
+              className="px-3 py-1 rounded bg-parchment text-ink font-semibold"
+            >
+              Lấy 1 lá từ {p.name} + rút 1
+            </button>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  if (pending.kind === "PedroDrawChoice") {
+    return (
+      <div className="mb-4 p-4 rounded bg-rust/20 border border-rust">
+        <p className="mb-2">Pedro Ramirez: lấy lá trên nóc chồng bỏ, hoặc rút bình thường.</p>
+        <div className="flex gap-2">
+          <button
+            onClick={() => act({ type: "CHOOSE_PEDRO_DRAW", playerId, useDiscard: true })}
+            className="px-3 py-1 rounded bg-parchment text-ink font-semibold"
+          >
+            Lấy lá trên nóc chồng bỏ + rút 1
+          </button>
+          <button
+            onClick={() => act({ type: "CHOOSE_PEDRO_DRAW", playerId, useDiscard: false })}
+            className="px-3 py-1 rounded border border-dust/60 hover:border-rust"
+          >
+            Rút 2 lá từ bộ bài
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (pending.kind === "KitCarlsonDraw") {
+    const pool = (pending.data?.pool as { id: string; suit: string; rank: string }[]) ?? [];
+    return (
+      <div className="mb-4 p-4 rounded bg-rust/20 border border-rust">
+        <p className="mb-2">Kit Carlson: chọn 2 trong 3 lá để giữ lại ({kitSelected.length}/2).</p>
+        <div className="flex gap-2 flex-wrap mb-2">
+          {pool.map((c) => {
+            const kind = kindOfCardId(c.id);
+            const def = kind ? CARD_DEFS[kind] : undefined;
+            return (
+              <CardFace
+                key={c.id}
+                card={c as never}
+                label={def?.label ?? kind ?? "?"}
+                kind={kind}
+                small
+                selected={kitSelected.includes(c.id)}
+                onClick={() => onToggleKit(c.id)}
+              />
+            );
+          })}
+        </div>
+        <button
+          disabled={kitSelected.length !== 2}
+          onClick={() => act({ type: "CHOOSE_KIT_CARLSON", playerId, keepCardIds: kitSelected })}
+          className="px-3 py-1 rounded bg-parchment text-ink font-semibold disabled:opacity-40"
+        >
+          Xác nhận giữ 2 lá đã chọn
         </button>
       </div>
     );

@@ -99,11 +99,54 @@ export type GamePhase =
   | "gameover";
 
 export interface PendingResponse {
-  kind: "BangResponse" | "DuelResponse" | "IndiansResponse" | "GeneralStoreDraw" | "JailCheck" | "DynamiteCheck";
+  kind:
+    | "BangResponse"
+    | "DuelResponse"
+    | "IndiansResponse"
+    | "GeneralStoreDraw"
+    | "JailCheck"
+    | "DynamiteCheck"
+    | "GatlingResponse"
+    | "JesseDrawChoice"
+    | "PedroDrawChoice"
+    | "KitCarlsonDraw";
   fromPlayerId: string;
   targetPlayerId: string;
   cardInstanceId?: string;
   data?: Record<string, unknown>;
+}
+
+/**
+ * Emitted whenever any player plays/discards a card, so every client (not
+ * just the one who played it) can animate the card flying from that
+ * player's seat down to the center pile. `seq` is a monotonically
+ * increasing counter (see GameState.eventSeq) so the client can detect a
+ * *new* event even if the same card kind gets played twice in a row.
+ * `toDiscard` is false for blue/equip cards (Barrel, Scope, Mustang, Jail,
+ * Dynamite, weapons) which stay in play instead of landing on the discard
+ * pile, so the client knows not to fly those to the center.
+ */
+export interface PlayedCardEvent {
+  seq: number;
+  playerId: string;
+  card: PlayingCard;
+  kind: CardKind;
+  targetId?: string;
+  toDiscard: boolean;
+}
+
+/**
+ * Emitted whenever the engine flips a card to judge something (Dynamite
+ * check, Jail check, ...) so the client can reveal that draw instead of it
+ * happening invisibly on the server.
+ */
+export interface JudgeDrawEvent {
+  seq: number;
+  playerId: string;
+  card: PlayingCard;
+  reason: "Dynamite" | "Jail" | "Barrel" | "BlackJack";
+  success: boolean;
+  resultLabel: string;
 }
 
 export interface GameState {
@@ -116,9 +159,13 @@ export interface GameState {
   players: Record<string, PlayerState>;
   pendingResponse: PendingResponse | null;
   bangPlayedThisTurn: Record<string, number>; // playerId -> count (Volcanic allows unlimited)
+  beerPlayedThisTurn: Record<string, number>; // playerId -> count (limited to 1/turn)
   log: string[];
   winner: RoleName | "Outlaws+Renegade" | null;
   version: number;
+  eventSeq: number;
+  lastPlayedCard: PlayedCardEvent | null;
+  lastJudgeDraw: JudgeDrawEvent | null;
 }
 
 // ---------- Redacted view sent to a specific client ----------

@@ -1,3 +1,4 @@
+import type { Ref } from "react";
 import { PlayingCard } from "@/lib/types";
 import { CARD_DEFS, kindOfCardId } from "@/lib/data/cards";
 import { CardBack, CardFace } from "./CardView";
@@ -25,9 +26,16 @@ function messyTransform(id: string) {
 export function DeckPile({
   deckCount,
   discardPile,
+  discardRef,
+  onDiscardClick,
 }: {
   deckCount: number;
   discardPile: PlayingCard[];
+  /** Forwarded to the discard-pile wrapper so the room page can measure its
+   * on-screen position and animate other players' played cards flying here. */
+  discardRef?: Ref<HTMLDivElement>;
+  /** Opens the full discard history when the pile is clicked. */
+  onDiscardClick?: () => void;
 }) {
   const visible = discardPile.slice(-VISIBLE_PILE_SIZE);
 
@@ -39,7 +47,14 @@ export function DeckPile({
       </div>
 
       <div className="flex flex-col items-center gap-1">
-        <div className="relative w-16 h-24">
+        <div
+          ref={discardRef}
+          onClick={onDiscardClick}
+          title="Bấm để xem lịch sử bài đã bỏ"
+          className={`relative w-16 h-24 rounded ${
+            onDiscardClick ? "cursor-pointer hover:ring-2 hover:ring-rust/60 hover:bg-rust/5 transition" : ""
+          }`}
+        >
           {visible.length === 0 && (
             <div className="absolute inset-0 m-auto w-10 aspect-[250/389] rounded-md border-2 border-dashed border-dust/30" />
           )}
