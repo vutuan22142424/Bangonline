@@ -12,7 +12,21 @@ import { CARD_DEFS, WEAPON_RANGE } from "./data/cards";
 import { CardKind, CharacterId, GameState, PlayingCard } from "./types";
 
 export type ActionType =
-  | { type: "PLAY_CARD"; playerId: string; cardId: string; kind: CardKind; targetId?: string; targetIds?: string[] }
+  | {
+      type: "PLAY_CARD";
+      playerId: string;
+      cardId: string;
+      kind: CardKind;
+      targetId?: string;
+      targetIds?: string[];
+      /** Cat Balou / Panic!: a specific *visible* card of the target's
+       * in-play area to take/discard. Omit to take a random card from the
+       * target's hand instead. */
+      sourceCardId?: string;
+      /** Saloon: "all" (default, official rule) heals every alive player;
+       * "self" heals only the player who played it. */
+      saloonMode?: "all" | "self";
+    }
   | { type: "RESPOND_MISSED"; playerId: string; cardId: string | null; cardIds?: string[] } // null/[] = no Missed!, take the hit
   | { type: "RESPOND_DUEL"; playerId: string; cardId: string | null }
   | { type: "RESPOND_INDIANS"; playerId: string; cardId: string | null }
@@ -181,10 +195,19 @@ function handlePlayCard(state: GameState, action: Extract<ActionType, { type: "P
     }
     case "Saloon": {
       state.discardPile.push(card);
-      Object.values(state.players).forEach((p) => {
-        if (p.isAlive && p.hp < p.maxHp) p.hp += 1;
-      });
-      state.log.push(`${player.name} chơi Saloon, mọi người hồi 1 máu.`);
+      if (action.saloonMode === "self") {
+        if (player.hp < player.maxHp) {
+          player.hp += 1;
+          state.log.push(`${player.name} chơi Saloon, chỉ hồi máu cho riêng mình.`);
+        } else {
+          state.log.push(`${player.name} chơi Saloon nhưng đã đầy máu.`);
+        }
+      } else {
+        Object.values(state.players).forEach((p) => {
+          if (p.isAlive && p.hp < p.maxHp) p.hp += 1;
+        });
+        state.log.push(`${player.name} chơi Saloon, mọi người hồi 1 máu.`);
+      }
       break;
     }
     case "Stagecoach": {
@@ -206,13 +229,13 @@ function handlePlayCard(state: GameState, action: Extract<ActionType, { type: "P
       if (effectiveDistance(state, player.id, target) > 1) {
         throw new GameError("Panic! chỉ dùng được với người trong khoảng cách 1.");
       }
-      stealOneCard(state, player.id, target);
+      stealOneCard(state, player.id, target, action.sourceCardId);
       state.discardPile.push(card);
       break;
     }
     case "CatBalou": {
       const target = requireTarget(action);
-      forceDiscardOneCard(state, target);
+      forceDiscardOneCard(state, target, action.sourceCardId);
       state.discardPile.push(card);
       break;
     }
@@ -337,9 +360,8 @@ function drawN(state: GameState, n: number): PlayingCard[] {
   return out;
 }
 
-/** A single pool of "hand or field" locations, used so Panic!/Cat Balou can
- * genuinely land on either — previously this only ever touched a player's
- * field cards once their hand was completely empty. */
+/** A single pool of "hand or field" locations, used as the random fallback
+ * when the attacker doesn't specify a particular field card to take. */
 function handAndFieldPool(target: { hand: PlayingCard[]; inPlay: PlayingCard[] }): Array<{ from: "hand" | "inPlay"; index: number }> {
   return [
     ...target.hand.map((_, index) => ({ from: "hand" as const, index })),
@@ -347,35 +369,57 @@ function handAndFieldPool(target: { hand: PlayingCard[]; inPlay: PlayingCard[] }
   ];
 }
 
-function stealOneCard(state: GameState, fromId: string, toId: string) {
+/**
+ * Removes one card from `target`, either:
+ * - a specific, visible in-play (field) card if `sourceCardId` is given, or
+ * - a random card from hand ∪ field, when omitted. In practice the client
+ *   only omits it when the target has no field cards to choose from, so
+ *   this effectively becomes "random from hand" — matching Cat Balou/Panic!'s
+ *   real rule (attacker either picks a specific visible field card, or
+ *   blindly draws one from the hidden hand).
+ */
+function pickCardToRemove(
+  target: { hand: PlayingCard[]; inPlay: PlayingCard[] },
+  sourceCardId: string | undefined
+): { card: PlayingCard; from: "hand" | "inPlay" } | null {
+  if (sourceCardId) {
+    const idx = target.inPlay.findIndex((c) => c.id === sourceCardId);
+    if (idx === -1) throw new GameError("Lá bài trên sân không hợp lệ.");
+    const [card] = target.inPlay.splice(idx, 1);
+    return { card, from: "inPlay" };
+  }
+  const pool = handAndFieldPool(target);
+  if (pool.length === 0) return null;
+  const pick = pool[Math.floor(Math.random() * pool.length)];
+  const card = pick.from === "hand" ? target.hand.splice(pick.index, 1)[0] : target.inPlay.splice(pick.index, 1)[0];
+  return { card, from: pick.from };
+}
+
+function stealOneCard(state: GameState, fromId: string, toId: string, sourceCardId?: string) {
   const target = state.players[toId];
   const thief = state.players[fromId];
-  const pool = handAndFieldPool(target);
-  if (pool.length === 0) {
+  const picked = pickCardToRemove(target, sourceCardId);
+  if (!picked) {
     state.log.push(`${target.name} không còn lá nào để mất.`);
     return;
   }
-  const pick = pool[Math.floor(Math.random() * pool.length)];
-  const c = pick.from === "hand" ? target.hand.splice(pick.index, 1)[0] : target.inPlay.splice(pick.index, 1)[0];
-  thief.hand.push(c);
+  thief.hand.push(picked.card);
   checkSuzyLafayette(state, target.id);
-  state.log.push(`${thief.name} lấy 1 lá từ ${target.name} (${pick.from === "hand" ? "trên tay" : "trên sân"}).`);
+  state.log.push(`${thief.name} lấy 1 lá từ ${target.name} (${picked.from === "hand" ? "trên tay" : "trên sân"}).`);
 }
 
-function forceDiscardOneCard(state: GameState, targetId: string) {
+function forceDiscardOneCard(state: GameState, targetId: string, sourceCardId?: string) {
   const target = state.players[targetId];
-  const pool = handAndFieldPool(target);
-  if (pool.length === 0) {
+  const picked = pickCardToRemove(target, sourceCardId);
+  if (!picked) {
     state.log.push(`${target.name} không còn lá nào để bỏ.`);
     return;
   }
-  const pick = pool[Math.floor(Math.random() * pool.length)];
-  const c = pick.from === "hand" ? target.hand.splice(pick.index, 1)[0] : target.inPlay.splice(pick.index, 1)[0];
-  state.discardPile.push(c);
-  const kind = cardKindOf(c);
-  if (kind) recordPlayedCard(state, target.id, c, kind, undefined, true);
+  state.discardPile.push(picked.card);
+  const kind = cardKindOf(picked.card);
+  if (kind) recordPlayedCard(state, target.id, picked.card, kind, undefined, true);
   checkSuzyLafayette(state, target.id);
-  state.log.push(`${target.name} bị buộc bỏ 1 lá (${pick.from === "hand" ? "trên tay" : "trên sân"}).`);
+  state.log.push(`${target.name} bị buộc bỏ 1 lá (${picked.from === "hand" ? "trên tay" : "trên sân"}).`);
 }
 
 function pickOrderFrom(state: GameState, startId: string): string[] {

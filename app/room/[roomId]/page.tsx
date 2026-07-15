@@ -58,6 +58,15 @@ export default function RoomPage() {
   const [infoPlayerId, setInfoPlayerId] = useState<string | null>(null);
   const [showHistory, setShowHistory] = useState(false);
 
+  // ---- Saloon: choose "heal everyone" (official rule) or "heal only me" ----
+  const [pendingSaloonCardId, setPendingSaloonCardId] = useState<string | null>(null);
+
+  // ---- Cat Balou / Panic!: choose a specific visible field card of the
+  // target to take/discard, or fall back to a random hand card ----
+  const [pendingStealChoice, setPendingStealChoice] = useState<{ cardId: string; kind: string; targetId: string } | null>(
+    null
+  );
+
   // ---- Sid Ketchum: pick 2 hand cards to discard for +1 HP ----
   const [sidMode, setSidMode] = useState(false);
   const [sidSelected, setSidSelected] = useState<string[]>([]);
@@ -172,7 +181,7 @@ export default function RoomPage() {
       } else if (roomStatus === "lobby") {
         refreshLobby();
       }
-    }, 500);
+    }, 2000);
 
     return () => clearInterval(interval);
   }, [playerId, roomStatus, refreshGameState, refreshLobby]);
@@ -446,6 +455,10 @@ export default function RoomPage() {
       return;
     }
     if (!isMyTurn || pending) return;
+    if (kind === "Saloon") {
+      setPendingSaloonCardId(cardId);
+      return;
+    }
     if (cardNeedsTarget(kind)) {
       setSelectedCardId(cardId);
       setPendingTargetCardId(cardId);
@@ -479,14 +492,54 @@ export default function RoomPage() {
     if (!pendingTargetCardId || !state) return;
     const card = me!.hand!.find((c) => c.id === pendingTargetCardId);
     if (!card) return;
+    const kind = selectedKindOf(card.id);
+
+    // Cat Balou / Panic!: if the target has any visible field (equip) cards,
+    // let the player choose a specific one to take/discard, or fall back to
+    // a random card from the target's hidden hand.
+    if (kind === "Panic" || kind === "CatBalou") {
+      const targetPlayer = state.players[targetId];
+      const hasFieldCards = (targetPlayer?.inPlay?.length ?? 0) > 0;
+      setPendingTargetCardId(null);
+      setSelectedCardId(null);
+      if (hasFieldCards) {
+        setPendingStealChoice({ cardId: card.id, kind, targetId });
+        return;
+      }
+      animateCardPlay(card.id);
+      act({ type: "PLAY_CARD", playerId: playerId!, cardId: card.id, kind: kind as never, targetId });
+      return;
+    }
+
     animateCardPlay(card.id);
     act({
       type: "PLAY_CARD",
       playerId: playerId!,
       cardId: card.id,
-      kind: selectedKindOf(card.id) as never,
+      kind: kind as never,
       targetId,
     });
+  }
+
+  function finalizeStealChoice(sourceCardId?: string) {
+    if (!pendingStealChoice) return;
+    animateCardPlay(pendingStealChoice.cardId);
+    act({
+      type: "PLAY_CARD",
+      playerId: playerId!,
+      cardId: pendingStealChoice.cardId,
+      kind: pendingStealChoice.kind as never,
+      targetId: pendingStealChoice.targetId,
+      sourceCardId,
+    });
+    setPendingStealChoice(null);
+  }
+
+  function fireSaloon(mode: "all" | "self") {
+    if (!pendingSaloonCardId) return;
+    animateCardPlay(pendingSaloonCardId);
+    act({ type: "PLAY_CARD", playerId: playerId!, cardId: pendingSaloonCardId, kind: "Saloon" as never, saloonMode: mode });
+    setPendingSaloonCardId(null);
   }
 
   function selectedKindOf(cardId: string): string {
@@ -598,6 +651,75 @@ export default function RoomPage() {
             playerName={state.lastJudgeDraw ? state.players[state.lastJudgeDraw.playerId]?.name : undefined}
           />
         </div>
+
+        {/* Saloon: choose to heal everyone (official rule) or only myself */}
+        {pendingSaloonCardId && (
+          <div className="mb-4 p-4 rounded bg-rust/20 border border-rust flex items-center gap-3 flex-wrap">
+            <span>Saloon: hồi máu cho ai?</span>
+            <button
+              onClick={() => fireSaloon("all")}
+              className="px-3 py-1 rounded bg-parchment text-ink font-semibold"
+            >
+              Hồi máu cho tất cả (đúng luật)
+            </button>
+            <button
+              onClick={() => fireSaloon("self")}
+              className="px-3 py-1 rounded border border-dust/60 hover:border-rust"
+            >
+              Chỉ hồi máu cho mình
+            </button>
+            <button
+              onClick={() => setPendingSaloonCardId(null)}
+              className="px-3 py-1 rounded border border-dust/40 text-dust"
+            >
+              Hủy
+            </button>
+          </div>
+        )}
+
+        {/* Cat Balou / Panic!: choose a specific field card of the target,
+            or draw a random card from their hidden hand. */}
+        {pendingStealChoice && (
+          <div className="mb-4 p-4 rounded bg-rust/20 border border-rust">
+            <p className="mb-2">
+              {pendingStealChoice.kind === "Panic" ? "Panic!" : "Cat Balou"}: chọn 1 lá cụ thể trên sân của{" "}
+              {state.players[pendingStealChoice.targetId]?.name}, hoặc {pendingStealChoice.kind === "Panic" ? "lấy" : "bỏ"}{" "}
+              ngẫu nhiên 1 lá trên tay họ.
+            </p>
+            <div className="flex gap-2 flex-wrap mb-2">
+              {(state.players[pendingStealChoice.targetId]?.inPlay ?? []).map((c) => {
+                const kind = kindOfCardId(c.id);
+                const label = kind ? CARD_DEFS[kind].label : "?";
+                return (
+                  <CardFace
+                    key={c.id}
+                    card={c}
+                    label={label}
+                    kind={kind}
+                    small
+                    onClick={() => finalizeStealChoice(c.id)}
+                  />
+                );
+              })}
+            </div>
+            <div className="flex gap-2">
+              <button
+                disabled={(state.players[pendingStealChoice.targetId]?.handCount ?? 0) === 0}
+                onClick={() => finalizeStealChoice(undefined)}
+                className="px-3 py-1 rounded bg-parchment text-ink font-semibold disabled:opacity-40"
+              >
+                {pendingStealChoice.kind === "Panic" ? "Lấy" : "Bỏ"} ngẫu nhiên trên tay (
+                {state.players[pendingStealChoice.targetId]?.handCount ?? 0} lá)
+              </button>
+              <button
+                onClick={() => setPendingStealChoice(null)}
+                className="px-3 py-1 rounded border border-dust/40 text-dust"
+              >
+                Hủy
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Pending response banner */}
         {pending && isMyResponse && (
