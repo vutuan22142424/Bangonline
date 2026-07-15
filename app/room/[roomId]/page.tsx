@@ -181,7 +181,7 @@ export default function RoomPage() {
       } else if (roomStatus === "lobby") {
         refreshLobby();
       }
-    }, 2000);
+    }, 500);
 
     return () => clearInterval(interval);
   }, [playerId, roomStatus, refreshGameState, refreshLobby]);
