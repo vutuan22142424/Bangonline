@@ -71,6 +71,11 @@ export default function RoomPage() {
   const [sidMode, setSidMode] = useState(false);
   const [sidSelected, setSidSelected] = useState<string[]>([]);
 
+  // ---- End of turn: hand size over the limit (= current HP) — the player
+  // must choose which cards to discard themselves before the turn can end ----
+  const [discardMode, setDiscardMode] = useState(false);
+  const [discardSelected, setDiscardSelected] = useState<string[]>([]);
+
   // ---- Slab the Killer: shooter requires 2 Missed! to dodge ----
   const [slabSelected, setSlabSelected] = useState<string[]>([]);
 
@@ -181,7 +186,7 @@ export default function RoomPage() {
       } else if (roomStatus === "lobby") {
         refreshLobby();
       }
-    }, 500);
+    }, 2000);
 
     return () => clearInterval(interval);
   }, [playerId, roomStatus, refreshGameState, refreshLobby]);
@@ -450,6 +455,10 @@ export default function RoomPage() {
   }
 
   function handleHandCardClick(cardId: string, kind: string) {
+    if (discardMode) {
+      toggleDiscardSelection(cardId);
+      return;
+    }
     if (sidMode) {
       toggleSidSelection(cardId);
       return;
@@ -465,6 +474,46 @@ export default function RoomPage() {
     } else {
       animateCardPlay(cardId);
       act({ type: "PLAY_CARD", playerId: playerId!, cardId, kind: kind as ActionType extends { kind: infer K } ? K : never });
+    }
+  }
+
+  // How many cards over the hand limit (limit == current HP) the player
+  // needs to discard before they're allowed to end their turn.
+  const handLimitExcess = me ? Math.max(0, (me.hand?.length ?? 0) - me.hp) : 0;
+
+  function handleEndTurnClick() {
+    if (handLimitExcess > 0) {
+      setDiscardMode(true);
+      setDiscardSelected([]);
+      return;
+    }
+    act({ type: "END_TURN", playerId: playerId! });
+  }
+
+  function toggleDiscardSelection(cardId: string) {
+    setDiscardSelected((prev) => {
+      if (prev.includes(cardId)) return prev.filter((id) => id !== cardId);
+      if (prev.length >= handLimitExcess) return prev;
+      const next = [...prev, cardId];
+      if (next.length === handLimitExcess) {
+        confirmDiscardExcessAndEndTurn(next);
+      }
+      return next;
+    });
+  }
+
+  async function confirmDiscardExcessAndEndTurn(cardIds: string[]) {
+    if (!playerId) return;
+    setError(null);
+    try {
+      await sendAction(roomId, playerId, { type: "DISCARD_EXCESS", playerId, cardIds });
+      const s2 = await sendAction(roomId, playerId, { type: "END_TURN", playerId });
+      setState(s2);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setDiscardMode(false);
+      setDiscardSelected([]);
     }
   }
 
@@ -547,7 +596,13 @@ export default function RoomPage() {
   }
 
   const canUseSidKetchum =
-    me.character === "SidKetchum" && isMyTurn && !pending && state.phase === "play" && me.hp < me.maxHp && (me.hand?.length ?? 0) >= 2;
+    me.character === "SidKetchum" &&
+    isMyTurn &&
+    !pending &&
+    !discardMode &&
+    state.phase === "play" &&
+    me.hp < me.maxHp &&
+    (me.hand?.length ?? 0) >= 2;
 
   return (
     <main className="min-h-screen p-4 md:p-8">
@@ -575,9 +630,25 @@ export default function RoomPage() {
                 Hủy ({sidSelected.length}/2)
               </button>
             )}
-            {isMyTurn && !pending && !sidMode && (
+            {discardMode && (
+              <span className="px-3 py-2 rounded border border-rust text-sm text-rust">
+                Chọn {handLimitExcess} lá để bỏ ({discardSelected.length}/{handLimitExcess})
+              </span>
+            )}
+            {discardMode && (
               <button
-                onClick={() => act({ type: "END_TURN", playerId: playerId! })}
+                onClick={() => {
+                  setDiscardMode(false);
+                  setDiscardSelected([]);
+                }}
+                className="px-3 py-2 rounded border border-dust/60 text-sm"
+              >
+                Hủy
+              </button>
+            )}
+            {isMyTurn && !pending && !sidMode && !discardMode && (
+              <button
+                onClick={handleEndTurnClick}
                 className="px-4 py-2 rounded bg-rust hover:bg-rust/80 font-semibold"
               >
                 Kết thúc lượt
@@ -762,6 +833,12 @@ export default function RoomPage() {
           {sidMode && (
             <p className="mt-3 text-sm text-rust italic">Chọn 2 lá bất kỳ trên tay để bỏ, hồi 1 máu (Sid Ketchum).</p>
           )}
+          {discardMode && (
+            <p className="mt-3 text-sm text-rust italic">
+              Tay đang có {me.hand?.length ?? 0} lá, giới hạn là {me.hp} (bằng máu hiện tại). Chọn {handLimitExcess} lá để
+              bỏ trước khi kết thúc lượt.
+            </p>
+          )}
           <div className="mt-4 flex flex-wrap gap-2">
             {me.hand?.map((c) => {
               const kind = selectedKindOf(c.id);
@@ -773,13 +850,14 @@ export default function RoomPage() {
                   ? "animate-card-deal-in"
                   : undefined;
               const isSidSelected = sidMode && sidSelected.includes(c.id);
+              const isDiscardSelected = discardMode && discardSelected.includes(c.id);
               return (
-                <div key={c.id} className={isSidSelected ? "ring-2 ring-rust rounded-md" : undefined}>
+                <div key={c.id} className={isSidSelected || isDiscardSelected ? "ring-2 ring-rust rounded-md" : undefined}>
                   <CardFace
                     card={c}
                     label={def?.label ?? "?"}
                     kind={kindOfCardId(c.id)}
-                    selected={selectedCardId === c.id || isSidSelected}
+                    selected={selectedCardId === c.id || isSidSelected || isDiscardSelected}
                     onClick={() => handleHandCardClick(c.id, kind)}
                     animationClassName={animationClassName}
                   />

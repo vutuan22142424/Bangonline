@@ -126,13 +126,20 @@ export function applyAction(state: GameState, action: ActionType): GameState {
     case "CHOOSE_CHARACTER":
       handleChooseCharacter(state, action);
       break;
-    case "END_TURN":
+    case "END_TURN": {
       requireCurrentPlayer(state, action.playerId);
       if (state.phase !== "play" && state.phase !== "discard") {
         throw new GameError("Không thể kết thúc lượt lúc này.");
       }
+      const current = state.players[action.playerId];
+      if (current.hand.length > current.hp) {
+        throw new GameError(
+          `Bạn phải tự chọn bỏ bớt bài trước khi kết thúc lượt (giới hạn tay = ${current.hp} lá, bạn đang có ${current.hand.length} lá).`
+        );
+      }
       endTurn(state);
       break;
+    }
   }
   state.version += 1;
   return state;
@@ -756,6 +763,8 @@ function handleGeneralStorePick(state: GameState, action: Extract<ActionType, { 
 }
 
 function handleDiscardExcess(state: GameState, action: Extract<ActionType, { type: "DISCARD_EXCESS" }>) {
+  requireCurrentPlayer(state, action.playerId);
+  if (state.phase !== "play") throw new GameError("Chỉ có thể bỏ bài dư trong giai đoạn ra bài.");
   const player = state.players[action.playerId];
   action.cardIds.forEach((id) => {
     const c = takeFromHand(state, action.playerId, id);
